@@ -65,10 +65,6 @@
       </svg>
     </div>
 
-    <div class="mt-3 text-center text-xs text-slate-500">
-      Sunrise <span id="sunriseTxt">—:—</span> • Sunset <span id="sunsetTxt">—:—</span>
-    </div>
-
     <div id="notice" class="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 hidden"></div>
   </section>
 </main>
@@ -87,9 +83,7 @@
     const fmtToggle = $('#fmtToggle')
     const fmtLabel  = $('#fmtLabel')
     const locLabel  = $('#locLabel')
-    const dayState  = $('#dayState')
-    const sunriseTxt= $('#sunriseTxt')
-    const sunsetTxt = $('#sunsetTxt')
+    const dayState  = $('#dayState');
     const noticeEl  = $('#notice')
     const srcTag    = $('#srcTag')
 
@@ -295,7 +289,7 @@
 
       // Marker position + theme label
       const info = semicyclePosition(now)
-      moveMarker(info.f)
+      moveMarker(info.f, info.dir)
       dayState.textContent = info.label
       updateTheme(info.isDay)
     }
@@ -318,22 +312,47 @@
 
     function updateSunLabels(){
       const twelve = is12h()
-      sunriseTxt.textContent = state.sunrise ? formatHM(state.sunrise, twelve) : '—'
-      sunsetTxt.textContent  = state.sunset  ? formatHM(state.sunset,  twelve) : '—'
-      labelLeft.textContent  = state.sunrise ? formatHM(state.sunrise, twelve) : '—'
-      labelRight.textContent = state.sunset  ? formatHM(state.sunset,  twelve) : '—'
+      const now = new Date()
+
+      // Polar cases: hide labels (no conventional rise/set)
+      if (state.polar === 'polar-day' || state.polar === 'polar-night'){
+        labelLeft.textContent = '—'
+        labelRight.textContent = '—'
+        return
+      }
+
+      // Daytime: left = Sunrise (today), right = Sunset (today)
+      if (state.sunrise && state.sunset && now >= state.sunrise && now <= state.sunset){
+        labelLeft.textContent  = formatHM(state.sunrise, twelve)
+        labelRight.textContent = formatHM(state.sunset,  twelve)
+        return
+      }
+
+      // Nighttime: left = Sunset (prev or today), right = Sunrise (today or next)
+      const afterSunset = state.sunset && now > state.sunset
+      const leftEvt  = afterSunset ? state.sunset : state.prevSunset
+      const rightEvt = afterSunset ? state.nextSunrise : state.sunrise
+      labelLeft.textContent  = leftEvt  ? formatHM(leftEvt,  twelve) : '—'
+      labelRight.textContent = rightEvt ? formatHM(rightEvt, twelve) : '—'
     }
 
     function semicyclePosition(now){
-      if (state.polar === 'polar-day') return { f: 0.5, isDay: true, label: 'Polar Day' }
-      if (state.polar === 'polar-night') return { f: 0.0, isDay: false, label: 'Polar Night' }
+      if (state.polar === 'polar-day') { setMarkerMode(true);  return { f: 0.5, isDay: true, dir: 1,  label: 'Polar Day' } }
+      if (state.polar === 'polar-night'){ setMarkerMode(false); return { f: 0.0, isDay: false, dir: -1, label: 'Polar Night' } }
       const sr = state.sunrise, ss = state.sunset
       const prevSS = state.prevSunset, nextSR = state.nextSunrise
       if (sr && ss && now >= sr && now <= ss){
         const f = (now - sr) / (ss - sr)
         setMarkerMode(true)
-        return { f: clamp01(f), isDay: true, label: 'Daytime' }
+        return { f: clamp01(f), isDay: true, dir: 1, label: 'Daytime' }
       }
+      // Night: choose correct span (prev sunset → sunrise) or (sunset → next sunrise)
+      let a = prevSS, b = sr
+      if (ss && now > ss) { a = ss; b = nextSR }
+      const f = a && b ? (now - a) / (b - a) : 0
+      setMarkerMode(false)
+      return { f: clamp01(f), isDay: false, dir: -1, label: 'Night' }
+    }
       // Night: choose correct span
       let a = prevSS, b = sr
       if (now > ss) { a = ss; b = nextSR }
@@ -344,9 +363,10 @@
 
     function clamp01(x){ return Math.max(0, Math.min(1, x)) }
 
-    function moveMarker(f){
-      // Map f∈[0,1] to θ: left(π)→right(0)
-      const theta = Math.PI * (1 - f)
+    function moveMarker(f, dir){
+      // Day moves left→right; Night moves right→left by inverting the fraction
+      const frac = (dir && dir < 0) ? (1 - f) : f
+      const theta = Math.PI * (1 - frac) // left(π) → right(0)
       const x = cx + r * Math.cos(theta)
       const y = cy - r * Math.sin(theta)
       marker.setAttribute('transform', `translate(${x},${y})`)
